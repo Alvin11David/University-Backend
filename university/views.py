@@ -5,8 +5,8 @@ from rest_framework import generics, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import ContactMessage
-from .serializers import ContactMessageSerializer
+from .models import ContactMessage, PartnershipDiscussion
+from .serializers import ContactMessageSerializer, PartnershipDiscussionSerializer
 
 
 def _base_email_html(title, subtitle, accent, content_html):
@@ -60,6 +60,7 @@ class ApiRootAPIView(APIView):
 				'message': 'University Portal API',
 				'endpoints': {
 					'contact': '/api/contact/',
+					'partnership_discussions': '/api/partnership-discussions/',
 				},
 			}
 		)
@@ -137,6 +138,94 @@ class ContactMessageCreateAPIView(generics.CreateAPIView):
 			body=confirmation_body,
 			from_email=settings.DEFAULT_FROM_EMAIL,
 			to=[contact_message.email],
+		)
+		confirmation_mail.attach_alternative(confirmation_html, 'text/html')
+		confirmation_mail.send(fail_silently=False)
+
+		headers = self.get_success_headers(serializer.data)
+		return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+
+class PartnershipDiscussionCreateAPIView(generics.CreateAPIView):
+	queryset = PartnershipDiscussion.objects.all()
+	serializer_class = PartnershipDiscussionSerializer
+
+	def create(self, request, *args, **kwargs):
+		serializer = self.get_serializer(data=request.data)
+		serializer.is_valid(raise_exception=True)
+		discussion = serializer.save()
+
+		university_email = getattr(settings, 'UNIVERSITY_CONTACT_EMAIL', '')
+		if not university_email:
+			return Response(
+				{'detail': 'UNIVERSITY_CONTACT_EMAIL is not configured.'},
+				status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+			)
+
+		admin_subject = f'Partnership Discussion: {discussion.partnership_goal}'
+		organization_label = discussion.organization if discussion.organization else 'Not provided'
+		admin_body = (
+			f'Full Name: {discussion.full_name}\n'
+			f'Email: {discussion.email}\n'
+			f'Organization: {organization_label}\n'
+			f'Partnership Goal: {discussion.partnership_goal}\n\n'
+			f'{discussion.message}'
+		)
+		admin_html = _base_email_html(
+			title='New Partnership Discussion',
+			subtitle='A new partnership inquiry was submitted from the website.',
+			accent='linear-gradient(135deg,#1d4ed8 0%,#0369a1 100%)',
+			content_html=(
+				f'<p style="margin:0 0 12px;font-size:15px;"><strong>Full Name:</strong> {escape(discussion.full_name)}</p>'
+				f'<p style="margin:0 0 12px;font-size:15px;"><strong>Email:</strong> {escape(discussion.email)}</p>'
+				f'<p style="margin:0 0 12px;font-size:15px;"><strong>Organization:</strong> {escape(organization_label)}</p>'
+				f'<p style="margin:0 0 16px;font-size:15px;"><strong>Partnership Goal:</strong> {escape(discussion.partnership_goal)}</p>'
+				'<div style="margin-top:8px;border:1px solid #e5e7eb;border-radius:12px;background:#eff6ff;padding:16px;">'
+				f'<p style="margin:0;font-size:15px;line-height:1.6;">{_message_html(discussion.message)}</p>'
+				'</div>'
+			),
+		)
+		admin_mail = EmailMultiAlternatives(
+			subject=admin_subject,
+			body=admin_body,
+			from_email=settings.DEFAULT_FROM_EMAIL,
+			to=[university_email],
+			reply_to=[discussion.email],
+		)
+		admin_mail.attach_alternative(admin_html, 'text/html')
+		admin_mail.send(fail_silently=False)
+
+		confirmation_subject = f'Partnership Request Received: {discussion.partnership_goal}'
+		confirmation_body = (
+			f'Hello {discussion.full_name},\n\n'
+			'Thank you for reaching out to discuss a partnership with us.\n'
+			'Our team will review your request and contact you with next steps.\n\n'
+			f'Partnership Goal: {discussion.partnership_goal}\n'
+			f'Organization: {organization_label}\n\n'
+			f'Message:\n{discussion.message}\n'
+		)
+		confirmation_html = _base_email_html(
+			title='Conversation Started',
+			subtitle='Thank you for sharing your partnership goals with us.',
+			accent='linear-gradient(135deg,#92400e 0%,#c2410c 100%)',
+			content_html=(
+				f'<p style="margin:0 0 12px;font-size:15px;line-height:1.65;">Hello {escape(discussion.full_name)},</p>'
+				'<p style="margin:0 0 16px;font-size:15px;line-height:1.65;">'
+					'We appreciate your interest in partnering with University Portal. '
+					'Our team will follow up shortly with next steps.'
+				'</p>'
+				'<div style="margin-top:6px;border:1px solid #e5e7eb;border-radius:12px;background:#fff7ed;padding:16px;">'
+				f'<p style="margin:0 0 10px;font-size:15px;"><strong>Partnership Goal:</strong> {escape(discussion.partnership_goal)}</p>'
+				f'<p style="margin:0 0 10px;font-size:15px;"><strong>Organization:</strong> {escape(organization_label)}</p>'
+				f'<p style="margin:0;font-size:15px;line-height:1.6;">{_message_html(discussion.message)}</p>'
+				'</div>'
+			),
+		)
+		confirmation_mail = EmailMultiAlternatives(
+			subject=confirmation_subject,
+			body=confirmation_body,
+			from_email=settings.DEFAULT_FROM_EMAIL,
+			to=[discussion.email],
 		)
 		confirmation_mail.attach_alternative(confirmation_html, 'text/html')
 		confirmation_mail.send(fail_silently=False)
