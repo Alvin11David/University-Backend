@@ -50,10 +50,3 @@ urlpatterns = [
 
 
 
-
-
-
-
-
-
-
